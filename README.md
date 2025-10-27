@@ -67,7 +67,7 @@ Tip: For interactive local use, paste your LLM and provider API keys into the St
 1. Clone or download the repository:
 
 ```powershell
-git clone <https://github.com/Ujjwal-Bajpayee/OpenScope.git> OpenScout
+git clone <https://github.com/Ujjwal-Bajpayee/OpenScope.git> 
 cd OpenScout
 ```
 
