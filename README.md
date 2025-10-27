@@ -54,7 +54,7 @@ UI screenshots from a sample run (click to view full size):
 
 - Side Panel
 
-    ![OpenScout answer + sources](Output3.png)
+    ![Side Panel](output3.png)
  
 ---
 
@@ -67,7 +67,7 @@ Tip: For interactive local use, paste your LLM and provider API keys into the St
 1. Clone or download the repository:
 
 ```powershell
-git clone <your-repo-url> OpenScout
+git clone <https://github.com/Ujjwal-Bajpayee/OpenScope.git> OpenScout
 cd OpenScout
 ```
 
