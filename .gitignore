@@ -1,0 +1,10 @@
+# Environment files
+.env
+.env.*
+*.env
+
+# Python cache & virtualenv
+__pycache__/
+*.pyc
+venv/
+.envrc
