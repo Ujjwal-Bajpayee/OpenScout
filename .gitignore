@@ -8,3 +8,7 @@ __pycache__/
 *.pyc
 venv/
 .envrc
+
+faiss_index.bin
+chunks.sqlite
+

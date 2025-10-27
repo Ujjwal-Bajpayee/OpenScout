@@ -1,6 +1,6 @@
 # OpenScout
 
-OpenScout is a developer-focused Retrieval-Augmented Generation (RAG) [Perplexity Type Architecture] With MCP Integration application using Neo4j.
+OpenScout is a developer-focused Retrieval-Augmented Generation (RAG) [Perplexity Type Architecture] with MCP integration and Neo4j adapter.
 
 It answers natural-language questions by searching the web, fetching and extracting page content, chunking and embedding passages, storing vectors in FAISS, retrieving the most relevant passages, reranking them, and synthesizing a concise, cited answer using a pluggable LLM adapter.
 
@@ -77,6 +77,7 @@ cd OpenScout
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+Note- First query may download ~90MB model
 ```
 
 3. Obtain credentials:
@@ -87,7 +88,7 @@ pip install -r requirements.txt
 4. Create a `.env` file in the project root with the credentials (example) — OR, for interactive use, paste keys into the Streamlit sidebar fields at runtime (preferred for local testing). The sidebar stores keys in-session; `.env` is optional and mainly useful for CI or when you want persistent local defaults.
 
 ```text
-TAVILY_API_KEY=sk_tavily_...
+TAVILY_API_KEY=tvly...
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=yourpassword
