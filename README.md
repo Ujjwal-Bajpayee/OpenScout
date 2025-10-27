@@ -21,6 +21,8 @@ High-level components and runtime flow:
 
 Runtime flow: user query → search (MCP or Tavily) → fetch pages → chunk & embed → index/store → retrieve top passages → (rerank) → LLM synthesize → UI.
 
+![Architecture](Architecture.png)
+
 
 ## Files
 
