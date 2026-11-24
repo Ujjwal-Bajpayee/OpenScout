@@ -1,4 +1,3 @@
-import os
 from typing import List
 import httpx
 from tavily import TavilyClient, errors as tavily_errors
@@ -7,7 +6,7 @@ from neo4j import GraphDatabase
 class MCPTools:
     def __init__(self, keys: dict):
         self.keys = keys or {}
-        self.mcp_url = self.keys.get("MCP_URL") or os.getenv("MCP_URL")
+        self.mcp_url = self.keys.get("MCP_URL")
         self._neo4j_driver = None
         if self.keys.get("NEO4J_URI") and self.keys.get("NEO4J_USERNAME") and self.keys.get("NEO4J_PASSWORD"):
             try:
@@ -19,7 +18,7 @@ class MCPTools:
 
     def _call_mcp(self, path: str, payload: dict, timeout: float = 20.0) -> dict:
         if not self.mcp_url:
-            raise RuntimeError("MCP_URL not configured")
+            raise RuntimeError("MCP_URL not configured in sidebar.")
         url = self.mcp_url.rstrip("/") + path
         headers = {"Content-Type": "application/json"}
         if self.keys.get("MCP_API_KEY"):
@@ -42,14 +41,16 @@ class MCPTools:
                 out.append({"url": r.get("url", ""), "title": r.get("title", ""), "snippet": r.get("content", "")})
             return out
 
-        client = TavilyClient(api_key=self.keys.get("TAVILY_API_KEY")) if self.keys.get("TAVILY_API_KEY") else TavilyClient()
+        tavily_key = (self.keys.get("TAVILY_API_KEY") or "").strip().strip("'\"")
+        if not tavily_key:
+            raise RuntimeError("Tavily API key not provided. Please enter your Tavily API key in the sidebar.")
+
+        client = TavilyClient(api_key=tavily_key)
         try:
             res = client.search(query=query, max_results=k)
         except Exception as e:
             if isinstance(e, tavily_errors.InvalidAPIKeyError):
-                raise RuntimeError(
-                    "Tavily API key is missing or invalid. Please set TAVILY_API_KEY in .env or paste it in the sidebar."
-                ) from e
+                raise RuntimeError("Tavily API key is invalid or unauthorized. Please verify the key in the sidebar.") from e
             raise RuntimeError(f"Tavily search failed: {e}") from e
 
         out = []

@@ -1,6 +1,4 @@
 import streamlit as st
-import os
-from dotenv import load_dotenv
 from loguru import logger
 from core.graph import app_graph, State
 from core.ui import render_sources, privacy_note
@@ -9,7 +7,7 @@ from core.rerank import maybe_rerank
 from core.mcp.adapters import MCPTools
 from core.synthesize import _messages
 
-st.set_page_config(page_title="OpenScout — RAG Search", layout="wide")
+st.set_page_config(page_title="OpenScout — Perplexity-Style RAG", layout="wide")
 
 st.markdown(
     """
@@ -29,60 +27,71 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+if "keys" not in st.session_state:
+    st.session_state["keys"] = {}
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+if "last_hits" not in st.session_state:
+    st.session_state["last_hits"] = []
+if "last_citations" not in st.session_state:
+    st.session_state["last_citations"] = []
+
 with st.sidebar:
-    st.header("OpenScout Configuration")
-    load_dotenv()
-    env_defaults = {
-        "TAVILY_API_KEY": os.getenv("TAVILY_API_KEY", ""),
-        "NEO4J_URI": os.getenv("NEO4J_URI", ""),
-        "NEO4J_USERNAME": os.getenv("NEO4J_USERNAME", ""),
-        "NEO4J_PASSWORD": os.getenv("NEO4J_PASSWORD", ""),
-        "GROQ_API_KEY": os.getenv("GROQ_API_KEY", ""),
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
-        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY", ""),
-        "MCP_URL": os.getenv("MCP_URL", ""),
-        "MCP_API_KEY": os.getenv("MCP_API_KEY", "")
-    }
+    st.header("OpenScout Settings")
 
-    if "keys" not in st.session_state:
-        st.session_state["keys"] = {}
-    for _k, _v in env_defaults.items():
-        if _v and not st.session_state["keys"].get(_k):
-            st.session_state["keys"][_k] = _v
-
-    def key_input(label, name, ph):
+    def key_input(label, name, ph, help_text=None):
         cur = st.session_state["keys"].get(name, "")
-        v = st.text_input(label, value=cur, type="password", placeholder=ph)
-        st.session_state["keys"][name] = v
-        return v
+        v = st.text_input(label, value=cur, type="password", placeholder=ph, key=f"widget_{name}", help=help_text)
+        cleaned = v.strip().strip("'\"")
+        st.session_state["keys"][name] = cleaned
+        return cleaned
 
-    st.subheader("Search Credentials")
-    key_input("Tavily API Key", "TAVILY_API_KEY", "tvly-...")
+    st.subheader("1. Web Search Key")
+    tavily_key = key_input("Tavily API Key", "TAVILY_API_KEY", "tvly-...")
+    if not tavily_key:
+        st.caption("🔴 Tavily key is required for web search.")
+    else:
+        st.caption("🟢 Tavily key entered.")
 
-    st.subheader("LLM Selection")
-    provider = st.selectbox("LLM Provider & Model", [
+    st.subheader("2. LLM Provider & Model")
+    provider = st.selectbox("Model", [
+        "Groq / llama-3.3-70b-versatile",
+        "Groq / llama-3.1-8b-instant",
         "OpenAI / gpt-4o-mini",
         "OpenAI / gpt-4o",
         "Anthropic / Claude 3.5",
-        "Gemini / 1.5 Pro",
-        "Groq / llama-3.3-70b-versatile",
-        "Groq / llama-3.1-8b-instant"
+        "Gemini / 1.5 Pro"
     ])
 
-    if provider.startswith("OpenAI"):
-        key_input("OpenAI API Key", "OPENAI_API_KEY", "sk-...")
+    if provider.startswith("Groq"):
+        k_val = key_input("Groq API Key", "GROQ_API_KEY", "gsk_...")
+        if not k_val:
+            st.caption("🔴 Groq key is required.")
+        else:
+            st.caption("🟢 Groq key entered.")
+    elif provider.startswith("OpenAI"):
+        k_val = key_input("OpenAI API Key", "OPENAI_API_KEY", "sk-...")
+        if not k_val:
+            st.caption("🔴 OpenAI key is required.")
+        else:
+            st.caption("🟢 OpenAI key entered.")
     elif provider.startswith("Anthropic"):
-        key_input("Anthropic API Key", "ANTHROPIC_API_KEY", "sk-ant-...")
+        k_val = key_input("Anthropic API Key", "ANTHROPIC_API_KEY", "sk-ant-...")
+        if not k_val:
+            st.caption("🔴 Anthropic key is required.")
+        else:
+            st.caption("🟢 Anthropic key entered.")
     elif provider.startswith("Gemini"):
-        key_input("Google API Key", "GOOGLE_API_KEY", "AIza...")
-    elif provider.startswith("Groq"):
-        key_input("Groq API Key", "GROQ_API_KEY", "gsk_...")
+        k_val = key_input("Google API Key", "GOOGLE_API_KEY", "AIza...")
+        if not k_val:
+            st.caption("🔴 Google Gemini key is required.")
+        else:
+            st.caption("🟢 Google Gemini key entered.")
 
     with st.expander("Embeddings & MCP Settings"):
         if not provider.startswith("OpenAI"):
             key_input("OpenAI Key for Embeddings (optional)", "OPENAI_API_KEY", "sk-...")
-            st.caption("Leave blank to automatically use local Sentence-Transformers embeddings.")
+            st.caption("Leave blank to automatically use local Sentence-Transformers (free, runs locally).")
         mcp_checkbox = st.checkbox("Use MCP tools (Tavily / Neo4j)", value=False)
         if mcp_checkbox:
             key_input("MCP Server URL", "MCP_URL", "http://localhost:8000")
@@ -91,74 +100,65 @@ with st.sidebar:
             key_input("Neo4j Username", "NEO4J_USERNAME", "neo4j")
             key_input("Neo4j Password", "NEO4J_PASSWORD", "")
 
-    st.subheader("RAG Parameters")
+    st.subheader("3. RAG Controls")
     answer_mode = st.selectbox("Answer Mode", ["concise", "detailed", "list", "pros_cons", "timeline", "table"])
-    k = st.slider("Sources to Retrieve (Top-k)", min_value=2, max_value=12, value=6)
-    use_reranker = st.checkbox("Cross-Encoder Reranking", value=True)
+    k = st.slider("Sources (Top-k)", min_value=2, max_value=12, value=6)
+    use_reranker = st.checkbox("Cross-Encoder Reranker", value=True)
     temperature = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
 
-    if st.button("Reset session"):
+    if st.button("Reset Session & Keys"):
         st.session_state.clear()
         st.rerun()
 
     privacy_note()
 
     st.markdown("---")
-    st.subheader("Connectivity Tests")
-    col_tav, col_rst = st.columns(2)
-    with col_tav:
-        if st.button("Test Tavily"):
-            key_to_test = st.session_state["keys"].get("TAVILY_API_KEY", "") or os.getenv("TAVILY_API_KEY", "")
-            if not key_to_test:
-                st.error("No Tavily key set.")
-            else:
-                try:
-                    from tavily import TavilyClient
-                    client = TavilyClient(api_key=key_to_test)
-                    client.search(query="test", max_results=1)
-                    st.success("Tavily OK")
-                except Exception as e:
-                    st.error(f"Failed: {e}")
+    st.subheader("Connection Tests")
+
+    if st.button("Test Tavily Search"):
+        current_tav = st.session_state["keys"].get("TAVILY_API_KEY", "").strip()
+        if not current_tav:
+            st.error("Please enter a Tavily API key above first.")
+        else:
+            try:
+                from tavily import TavilyClient
+                client = TavilyClient(api_key=current_tav)
+                client.search(query="test", max_results=1)
+                st.success("Tavily connected successfully!")
+            except Exception as e:
+                st.error(f"Tavily connection failed: {e}")
 
     def _run_llm_test(label: str, key_name: str, display_name: str):
-        key_to_test = st.session_state["keys"].get(key_name, "") or os.getenv(key_name, "")
+        key_to_test = st.session_state["keys"].get(key_name, "").strip()
         if not key_to_test:
-            st.error(f"No {display_name} key.")
+            st.error(f"Please enter {display_name} API Key above first.")
             return
         try:
             llm = build_llm(label, st.session_state["keys"])
-            msg = [{"role": "system", "content": "You are a test responder."},
-                   {"role": "user", "content": "Respond with OK."}]
+            msg = [{"role": "user", "content": "Respond with OK."}]
             resp = llm.chat(msg, stream=False, max_tokens=16)
             out = ''.join(resp) if hasattr(resp, '__iter__') and not isinstance(resp, str) else str(resp)
             if out:
-                st.success(f"{display_name} OK")
+                st.success(f"{display_name} connected: {out.strip()[:40]}")
             else:
-                st.warning(f"Unexpected: {out}")
+                st.warning(f"Connected, but response was empty.")
         except Exception as e:
             st.error(f"{display_name} failed: {e}")
 
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button("Test OpenAI"):
-            _run_llm_test("OpenAI / gpt-4o-mini", "OPENAI_API_KEY", "OpenAI")
-        if st.button("Test Anthropic"):
-            _run_llm_test("Anthropic / Claude 3.5", "ANTHROPIC_API_KEY", "Anthropic")
-    with col_b:
         if st.button("Test Groq"):
             _run_llm_test("Groq / llama-3.3-70b-versatile", "GROQ_API_KEY", "Groq")
+        if st.button("Test OpenAI"):
+            _run_llm_test("OpenAI / gpt-4o-mini", "OPENAI_API_KEY", "OpenAI")
+    with col_b:
         if st.button("Test Gemini"):
             _run_llm_test("Gemini / 1.5 Pro", "GOOGLE_API_KEY", "Google/Gemini")
+        if st.button("Test Anthropic"):
+            _run_llm_test("Anthropic / Claude 3.5", "ANTHROPIC_API_KEY", "Anthropic")
 
 st.markdown("<h1 style='text-align: center;'>OpenScout</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #555;'>Developer-focused RAG search engine with multi-source retrieval & citations</p>", unsafe_allow_html=True)
-
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
-if "last_hits" not in st.session_state:
-    st.session_state["last_hits"] = []
-if "last_citations" not in st.session_state:
-    st.session_state["last_citations"] = []
+st.markdown("<p style='text-align: center; color: #555;'>Perplexity-style RAG search engine with web retrieval, reranking & inline citations</p>", unsafe_allow_html=True)
 
 left_col, right_col = st.columns([3, 2])
 
@@ -177,11 +177,25 @@ with right_col:
     if st.session_state["last_hits"]:
         render_sources(st.session_state["last_hits"], st.session_state["last_citations"])
     else:
-        st.caption("Sources will appear here after a search.")
+        st.caption("Retrieved and cited sources will appear here.")
 
-query = st.chat_input("Ask anything (we'll fetch sources and cite them)...")
+query = st.chat_input("Ask anything (we'll search the web, fetch pages, and cite sources)...")
 
 if query:
+    active_tavily = st.session_state["keys"].get("TAVILY_API_KEY", "").strip()
+    if not active_tavily:
+        st.error("Please enter your Tavily API Key in the sidebar before searching.")
+        st.stop()
+
+    required_llm_key = "GROQ_API_KEY" if provider.startswith("Groq") else (
+        "OPENAI_API_KEY" if provider.startswith("OpenAI") else (
+            "ANTHROPIC_API_KEY" if provider.startswith("Anthropic") else "GOOGLE_API_KEY"
+        )
+    )
+    if not st.session_state["keys"].get(required_llm_key, "").strip():
+        st.error(f"Please enter your {provider.split('/')[0].strip()} API Key in the sidebar before searching.")
+        st.stop()
+
     st.session_state["messages"].append({"role": "user", "content": query})
     with left_col:
         with st.chat_message("user"):
@@ -191,7 +205,7 @@ if query:
         with st.chat_message("assistant"):
             st.markdown("**OpenScout**")
             status_container = st.empty()
-            status_container.info("Searching, fetching, indexing, and answering...")
+            status_container.info("Searching web, reading pages, reranking, and synthesizing...")
 
             try:
                 llm = build_llm(provider, st.session_state["keys"])
@@ -202,8 +216,8 @@ if query:
                     query=query,
                     k=k,
                     use_mcp=use_mcp,
-                    tavily_api_key=st.session_state["keys"].get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY", ""),
-                    openai_api_key=st.session_state["keys"].get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
+                    tavily_api_key=active_tavily,
+                    openai_api_key=st.session_state["keys"].get("OPENAI_API_KEY", ""),
                     tools=tools
                 ))
 

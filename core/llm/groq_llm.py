@@ -1,22 +1,17 @@
-from openai import OpenAI
+from groq import Groq
 from .base import LLM
 
 class GroqLLM(LLM):
     name = "Groq"
 
     def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
-        self.api_key = api_key
+        self.api_key = api_key.strip().strip("'\"") if api_key else ""
         self.model = model
-        self.client = OpenAI(
-            base_url="https://api.groq.com/openai/v1",
-            api_key=api_key if api_key else "dummy_key",
-        )
+        self.client = Groq(api_key=self.api_key, timeout=30.0) if self.api_key else None
 
     def chat(self, messages, stream: bool = False, **kw):
-        if not self.api_key:
-            raise RuntimeError(
-                "Groq API key not provided. Set GROQ_API_KEY in .env or paste it in the sidebar."
-            )
+        if not self.api_key or not self.client:
+            raise RuntimeError("Groq API key not provided. Please enter your Groq API key in the sidebar.")
 
         resp = self.client.chat.completions.create(
             model=self.model,

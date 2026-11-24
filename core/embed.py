@@ -1,4 +1,3 @@
-import os
 import numpy as np
 
 _local_embed_model = None
@@ -17,7 +16,7 @@ def l2_normalize(X: np.ndarray) -> np.ndarray:
 def embed_texts(texts: list[str], api_key: str | None = None, model: str = "text-embedding-3-small") -> np.ndarray:
     if not texts:
         return np.empty((0, 0), dtype=np.float32)
-    key = api_key or os.getenv("OPENAI_API_KEY", "")
+    key = api_key.strip().strip("'\"") if api_key else ""
     if key:
         from openai import OpenAI
         client = OpenAI(api_key=key)
