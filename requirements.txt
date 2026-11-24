@@ -13,3 +13,4 @@ groq
 sentence-transformers
 loguru
 neo4j
+watchdog>=6.0.0

@@ -1,12 +1,12 @@
 # OpenScout
 
-OpenScout is a developer focused Retrieval Augmented Generation (RAG) search engine with multi source web retrieval, cross-encoder reranking, and citation synthesis.
+OpenScout is an open-source, developer-focused Retrieval-Augmented Generation (RAG) search engine **inspired by Perplexity AI**. It provides real-time web search, automated content extraction, vector indexing, cross-encoder reranking, and citation-backed synthesis.
 
-It answers natural language questions by searching the web, fetching and extracting page content, chunking and embedding passages, storing vectors in FAISS, retrieving the most relevant passages, reranking them, and synthesizing a concise, cited answer using a pluggable LLM adapter.
+It answers natural-language questions by searching the web, fetching and extracting page content, chunking and embedding passages, storing vectors in FAISS, retrieving the most relevant passages, reranking them, and synthesizing concise, cited answers with inline citations (`[#1]`, `[#2]`) using pluggable LLM adapters.
 
 ---
 
-## Architecture
+## Architecture (Perplexity-Style Pipeline)
 
 High-level components and runtime flow:
 

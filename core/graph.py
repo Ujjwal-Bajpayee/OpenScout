@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings("ignore")
 import asyncio
 import concurrent.futures
 from typing import List, Dict, Callable
