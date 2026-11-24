@@ -66,8 +66,8 @@ Quick steps to run OpenScout locally (PowerShell commands). These instructions a
 1. Clone or download the repository:
 
 ```powershell
-git clone https://github.com/Ujjwal-Bajpayee/OpenScout.git
-cd OpenScout
+git clone https://github.com/Ujjwal-Bajpayee/OpenScope.git
+cd OpenScope
 ```
 
 2. Create and activate a virtual environment, then install dependencies:
