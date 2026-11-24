@@ -2,7 +2,13 @@ import streamlit as st
 from loguru import logger
 from core.graph import app_graph, State
 from core.ui import render_sources, privacy_note
-from core.llm.registry import build_llm
+from core.llm.registry import (
+    build_llm,
+    fetch_available_groq_models,
+    fetch_available_openai_models,
+    fetch_available_gemini_models,
+    fetch_available_anthropic_models
+)
 from core.rerank import maybe_rerank
 from core.mcp.adapters import MCPTools
 from core.synthesize import _messages
@@ -36,6 +42,22 @@ if "last_hits" not in st.session_state:
 if "last_citations" not in st.session_state:
     st.session_state["last_citations"] = []
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_groq_models(api_key: str):
+    return fetch_available_groq_models(api_key)
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_openai_models(api_key: str):
+    return fetch_available_openai_models(api_key)
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_gemini_models(api_key: str):
+    return fetch_available_gemini_models(api_key)
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_anthropic_models(api_key: str):
+    return fetch_available_anthropic_models(api_key)
+
 with st.sidebar:
     st.header("OpenScout Settings")
 
@@ -54,42 +76,71 @@ with st.sidebar:
         st.caption("🟢 Tavily key entered.")
 
     st.subheader("2. LLM Provider & Model")
-    provider = st.selectbox("Model", [
-        "Groq / llama-3.3-70b-versatile",
-        "Groq / llama-3.1-8b-instant",
-        "OpenAI / gpt-4o-mini",
-        "OpenAI / gpt-4o",
-        "Anthropic / Claude 3.5",
-        "Gemini / 1.5 Pro"
-    ])
+    provider = st.selectbox("Provider", ["Groq", "OpenAI", "Gemini", "Anthropic"])
+    selected_model = ""
 
-    if provider.startswith("Groq"):
+    if provider == "Groq":
         k_val = key_input("Groq API Key", "GROQ_API_KEY", "gsk_...")
         if not k_val:
             st.caption("🔴 Groq key is required.")
+            models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
         else:
             st.caption("🟢 Groq key entered.")
-    elif provider.startswith("OpenAI"):
+            models = _cached_groq_models(k_val)
+
+        choice = st.selectbox("Groq Model", models + ["(Custom Model...)"])
+        if choice == "(Custom Model...)":
+            selected_model = st.text_input("Enter Groq Model ID", value="llama-3.3-70b-versatile", key="custom_groq").strip()
+        else:
+            selected_model = choice
+
+    elif provider == "OpenAI":
         k_val = key_input("OpenAI API Key", "OPENAI_API_KEY", "sk-...")
         if not k_val:
             st.caption("🔴 OpenAI key is required.")
+            models = ["gpt-4o-mini", "gpt-4o", "o1-mini", "o3-mini"]
         else:
             st.caption("🟢 OpenAI key entered.")
-    elif provider.startswith("Anthropic"):
-        k_val = key_input("Anthropic API Key", "ANTHROPIC_API_KEY", "sk-ant-...")
-        if not k_val:
-            st.caption("🔴 Anthropic key is required.")
+            models = _cached_openai_models(k_val)
+
+        choice = st.selectbox("OpenAI Model", models + ["(Custom Model...)"])
+        if choice == "(Custom Model...)":
+            selected_model = st.text_input("Enter OpenAI Model ID", value="gpt-4o-mini", key="custom_openai").strip()
         else:
-            st.caption("🟢 Anthropic key entered.")
-    elif provider.startswith("Gemini"):
+            selected_model = choice
+
+    elif provider == "Gemini":
         k_val = key_input("Google API Key", "GOOGLE_API_KEY", "AIza...")
         if not k_val:
             st.caption("🔴 Google Gemini key is required.")
+            models = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"]
         else:
             st.caption("🟢 Google Gemini key entered.")
+            models = _cached_gemini_models(k_val)
+
+        choice = st.selectbox("Gemini Model", models + ["(Custom Model...)"])
+        if choice == "(Custom Model...)":
+            selected_model = st.text_input("Enter Gemini Model ID", value="gemini-1.5-pro", key="custom_gemini").strip()
+        else:
+            selected_model = choice
+
+    elif provider == "Anthropic":
+        k_val = key_input("Anthropic API Key", "ANTHROPIC_API_KEY", "sk-ant-...")
+        if not k_val:
+            st.caption("🔴 Anthropic key is required.")
+            models = ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"]
+        else:
+            st.caption("🟢 Anthropic key entered.")
+            models = _cached_anthropic_models(k_val)
+
+        choice = st.selectbox("Anthropic Model", models + ["(Custom Model...)"])
+        if choice == "(Custom Model...)":
+            selected_model = st.text_input("Enter Anthropic Model ID", value="claude-3-5-sonnet-latest", key="custom_anthropic").strip()
+        else:
+            selected_model = choice
 
     with st.expander("Embeddings & MCP Settings"):
-        if not provider.startswith("OpenAI"):
+        if provider != "OpenAI":
             key_input("OpenAI Key for Embeddings (optional)", "OPENAI_API_KEY", "sk-...")
             st.caption("Leave blank to automatically use local Sentence-Transformers (free, runs locally).")
         mcp_checkbox = st.checkbox("Use MCP tools (Tavily / Neo4j)", value=False)
@@ -115,47 +166,43 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Connection Tests")
 
-    if st.button("Test Tavily Search"):
-        current_tav = st.session_state["keys"].get("TAVILY_API_KEY", "").strip()
-        if not current_tav:
-            st.error("Please enter a Tavily API key above first.")
-        else:
-            try:
-                from tavily import TavilyClient
-                client = TavilyClient(api_key=current_tav)
-                client.search(query="test", max_results=1)
-                st.success("Tavily connected successfully!")
-            except Exception as e:
-                st.error(f"Tavily connection failed: {e}")
-
-    def _run_llm_test(label: str, key_name: str, display_name: str):
-        key_to_test = st.session_state["keys"].get(key_name, "").strip()
-        if not key_to_test:
-            st.error(f"Please enter {display_name} API Key above first.")
-            return
-        try:
-            llm = build_llm(label, st.session_state["keys"])
-            msg = [{"role": "user", "content": "Respond with OK."}]
-            resp = llm.chat(msg, stream=False, max_tokens=16)
-            out = ''.join(resp) if hasattr(resp, '__iter__') and not isinstance(resp, str) else str(resp)
-            if out:
-                st.success(f"{display_name} connected: {out.strip()[:40]}")
+    col_tav, col_llm = st.columns(2)
+    with col_tav:
+        if st.button("Test Tavily"):
+            current_tav = st.session_state["keys"].get("TAVILY_API_KEY", "").strip()
+            if not current_tav:
+                st.error("Enter Tavily key first.")
             else:
-                st.warning(f"Connected, but response was empty.")
-        except Exception as e:
-            st.error(f"{display_name} failed: {e}")
+                try:
+                    from tavily import TavilyClient
+                    client = TavilyClient(api_key=current_tav)
+                    client.search(query="test", max_results=1)
+                    st.success("Tavily OK!")
+                except Exception as e:
+                    st.error(f"Tavily failed: {e}")
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("Test Groq"):
-            _run_llm_test("Groq / llama-3.3-70b-versatile", "GROQ_API_KEY", "Groq")
-        if st.button("Test OpenAI"):
-            _run_llm_test("OpenAI / gpt-4o-mini", "OPENAI_API_KEY", "OpenAI")
-    with col_b:
-        if st.button("Test Gemini"):
-            _run_llm_test("Gemini / 1.5 Pro", "GOOGLE_API_KEY", "Google/Gemini")
-        if st.button("Test Anthropic"):
-            _run_llm_test("Anthropic / Claude 3.5", "ANTHROPIC_API_KEY", "Anthropic")
+    with col_llm:
+        if st.button(f"Test {provider}"):
+            req_key = "GROQ_API_KEY" if provider == "Groq" else (
+                "OPENAI_API_KEY" if provider == "OpenAI" else (
+                    "ANTHROPIC_API_KEY" if provider == "Anthropic" else "GOOGLE_API_KEY"
+                )
+            )
+            key_val = st.session_state["keys"].get(req_key, "").strip()
+            if not key_val:
+                st.error(f"Enter {provider} key first.")
+            else:
+                try:
+                    llm = build_llm(provider, st.session_state["keys"], model=selected_model)
+                    msg = [{"role": "user", "content": "Respond with OK."}]
+                    resp = llm.chat(msg, stream=False, max_tokens=16)
+                    out = ''.join(resp) if hasattr(resp, '__iter__') and not isinstance(resp, str) else str(resp)
+                    if out:
+                        st.success(f"{provider} ({selected_model}) OK: {out.strip()[:30]}")
+                    else:
+                        st.warning("Empty response.")
+                except Exception as e:
+                    st.error(f"{provider} failed: {e}")
 
 st.markdown("<h1 style='text-align: center;'>OpenScout</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #555;'>Perplexity-style RAG search engine with web retrieval, reranking & inline citations</p>", unsafe_allow_html=True)
@@ -187,13 +234,13 @@ if query:
         st.error("Please enter your Tavily API Key in the sidebar before searching.")
         st.stop()
 
-    required_llm_key = "GROQ_API_KEY" if provider.startswith("Groq") else (
-        "OPENAI_API_KEY" if provider.startswith("OpenAI") else (
-            "ANTHROPIC_API_KEY" if provider.startswith("Anthropic") else "GOOGLE_API_KEY"
+    required_llm_key = "GROQ_API_KEY" if provider == "Groq" else (
+        "OPENAI_API_KEY" if provider == "OpenAI" else (
+            "ANTHROPIC_API_KEY" if provider == "Anthropic" else "GOOGLE_API_KEY"
         )
     )
     if not st.session_state["keys"].get(required_llm_key, "").strip():
-        st.error(f"Please enter your {provider.split('/')[0].strip()} API Key in the sidebar before searching.")
+        st.error(f"Please enter your {provider} API Key in the sidebar before searching.")
         st.stop()
 
     st.session_state["messages"].append({"role": "user", "content": query})
@@ -208,7 +255,7 @@ if query:
             status_container.info("Searching web, reading pages, reranking, and synthesizing...")
 
             try:
-                llm = build_llm(provider, st.session_state["keys"])
+                llm = build_llm(provider, st.session_state["keys"], model=selected_model)
                 tools = MCPTools(st.session_state["keys"])
                 use_mcp = bool(st.session_state["keys"].get("USE_MCP", False) or mcp_checkbox)
 
