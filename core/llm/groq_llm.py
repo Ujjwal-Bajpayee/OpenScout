@@ -1,40 +1,37 @@
-import httpx
+from openai import OpenAI
 from .base import LLM
 
 class GroqLLM(LLM):
     name = "Groq"
-    def __init__(self, api_key: str, model: str = "groq-1.0"):
+
+    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile"):
         self.api_key = api_key
         self.model = model
+        self.client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=api_key if api_key else "dummy_key",
+        )
 
-    def chat(self, messages, stream=False, **kw):
-        # Build a simple prompt from messages
-        prompt_parts = []
-        for m in messages:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-            prompt_parts.append(f"{role.upper()}: {content}")
-        prompt = "\n".join(prompt_parts)
-
+    def chat(self, messages, stream: bool = False, **kw):
         if not self.api_key:
-            # Graceful fallback when no key is provided
-            return (
-                "[Groq adapter] No GROQ_API_KEY provided. Provide the key in the sidebar to use Groq,\n"
-                "or select a different LLM.\n\n" +
-                "Request prompt:\n" + prompt[:1000]
+            raise RuntimeError(
+                "Groq API key not provided. Set GROQ_API_KEY in .env or paste it in the sidebar."
             )
 
-        url = kw.get("endpoint") or "https://api.groq.ai/v1/generate"
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        data = {"model": self.model, "input": prompt}
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=stream,
+            **kw
+        )
 
-        try:
-            r = httpx.post(url, json=data, headers=headers, timeout=30.0)
-            r.raise_for_status()
-            j = r.json()
-            # Try common response fields
-            if isinstance(j, dict):
-                return j.get("text") or j.get("output") or j.get("result") or str(j)
-            return str(j)
-        except Exception as e:
-            return f"[Groq adapter] request failed: {e}"
+        if not stream:
+            return resp.choices[0].message.content or ""
+
+        def gen():
+            for c in resp:
+                delta = c.choices[0].delta.content or ""
+                if delta:
+                    yield delta
+
+        return gen()

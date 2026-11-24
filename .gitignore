@@ -1,14 +1,14 @@
-# Environment files
 .env
 .env.*
 *.env
-
-# Python cache & virtualenv
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 venv/
+.venv/
 .envrc
-
 faiss_index.bin
 chunks.sqlite
-
+*.sqlite
+*.bin

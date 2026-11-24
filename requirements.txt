@@ -4,15 +4,12 @@ pydantic
 tavily-python
 httpx
 trafilatura
-beautifulsoup4
 python-dotenv
 faiss-cpu
 openai
 anthropic
 google-generativeai
+groq
 sentence-transformers
 loguru
-tiktoken
-sqlite-utils
-diskcache
 neo4j

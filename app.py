@@ -5,36 +5,32 @@ from loguru import logger
 from core.graph import app_graph, State
 from core.ui import render_sources, privacy_note
 from core.llm.registry import build_llm
-from core.faiss_store import get_index_and_db
 from core.rerank import maybe_rerank
 from core.mcp.adapters import MCPTools
+from core.synthesize import _messages
 
-st.set_page_config(page_title="OpenScout — RAG with MCP tool layer", layout="wide")
+st.set_page_config(page_title="OpenScout — RAG Search", layout="wide")
 
 st.markdown(
-        """
-        <style>
-            /* Base font sizes and container */
-            html, body, [data-testid="stAppViewContainer"] {font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;}
-            body {padding-top:1.25rem;}
-            .block-container{padding:1.5rem 2rem;}
-            h1{font-size:40px !important; margin-bottom: 0.35rem;}
-            h2{font-size:15px !important;}
-            p, .stMarkdown, .stText, .stCaption {font-size:14px !important;}
-            .stButton>button {padding:6px 10px !important;}
-            section[data-testid="stSidebar"] .block-container {padding:0.75rem 0.85rem;}
-            /* Smaller source captions */
-            .openscout-source {font-size:13px; color:#444444;}
-            .openscout-source-url {font-size:12px; color:#0a66c2;}
-            .openscout-title {text-align:center; font-weight:600; font-size:24px; margin:0.35rem 0 0.75rem 0; color:#111}
-        </style>
-        """,
-        unsafe_allow_html=True,
+    """
+    <style>
+        html, body, [data-testid="stAppViewContainer"] {font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;}
+        body {padding-top:1.25rem;}
+        .block-container{padding:1.5rem 2rem;}
+        h1{font-size:32px !important; margin-bottom: 0.35rem;}
+        h2{font-size:18px !important;}
+        p, .stMarkdown, .stText, .stCaption {font-size:14px !important;}
+        .stButton>button {padding:6px 10px !important;}
+        section[data-testid="stSidebar"] .block-container {padding:0.75rem 0.85rem;}
+        .openscout-source {font-size:13px; color:#444444;}
+        .openscout-source-url {font-size:12px; color:#0a66c2;}
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 with st.sidebar:
-    st.header(" API Keys ")
-    # Load .env into environment (allows BYO keys in .env)
+    st.header("OpenScout Configuration")
     load_dotenv()
     env_defaults = {
         "TAVILY_API_KEY": os.getenv("TAVILY_API_KEY", ""),
@@ -44,240 +40,217 @@ with st.sidebar:
         "GROQ_API_KEY": os.getenv("GROQ_API_KEY", ""),
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
         "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
-        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY", "")
+        "GOOGLE_API_KEY": os.getenv("GOOGLE_API_KEY", ""),
+        "MCP_URL": os.getenv("MCP_URL", ""),
+        "MCP_API_KEY": os.getenv("MCP_API_KEY", "")
     }
+
     if "keys" not in st.session_state:
-        # initialize empty session keys dict
         st.session_state["keys"] = {}
     for _k, _v in env_defaults.items():
         if _v and not st.session_state["keys"].get(_k):
             st.session_state["keys"][_k] = _v
 
-    def key(label, name, ph):
+    def key_input(label, name, ph):
         cur = st.session_state["keys"].get(name, "")
         v = st.text_input(label, value=cur, type="password", placeholder=ph)
-        # always store latest (empty clears)
         st.session_state["keys"][name] = v
-    provider = st.selectbox("LLM", [
-        "OpenAI / gpt-4o-mini","OpenAI / gpt-4o",
-        "Anthropic / Claude 3.5","Gemini / 1.5 Pro",
-        "Groq / groq-1.0"])
-    if provider.startswith("OpenAI"): key("OpenAI API Key","OPENAI_API_KEY","sk-...")
-    elif provider.startswith("Anthropic"): key("Anthropic API Key","ANTHROPIC_API_KEY","sk-ant-...")
-    elif provider.startswith("Gemini"): key("Google API Key","GOOGLE_API_KEY","AIza...")
-    elif provider.startswith("Groq"): key("Groq API Key","GROQ_API_KEY","grq-...")
-    if st.button("Reset session"): st.session_state.clear(); st.experimental_rerun()
-    mcp_checkbox = st.checkbox("Use MCP tools (Tavily / Neo4j)", value=False)
+        return v
+
+    st.subheader("Search Credentials")
+    key_input("Tavily API Key", "TAVILY_API_KEY", "tvly-...")
+
+    st.subheader("LLM Selection")
+    provider = st.selectbox("LLM Provider & Model", [
+        "OpenAI / gpt-4o-mini",
+        "OpenAI / gpt-4o",
+        "Anthropic / Claude 3.5",
+        "Gemini / 1.5 Pro",
+        "Groq / llama-3.3-70b-versatile",
+        "Groq / llama-3.1-8b-instant"
+    ])
+
+    if provider.startswith("OpenAI"):
+        key_input("OpenAI API Key", "OPENAI_API_KEY", "sk-...")
+    elif provider.startswith("Anthropic"):
+        key_input("Anthropic API Key", "ANTHROPIC_API_KEY", "sk-ant-...")
+    elif provider.startswith("Gemini"):
+        key_input("Google API Key", "GOOGLE_API_KEY", "AIza...")
+    elif provider.startswith("Groq"):
+        key_input("Groq API Key", "GROQ_API_KEY", "gsk_...")
+
+    with st.expander("Embeddings & MCP Settings"):
+        if not provider.startswith("OpenAI"):
+            key_input("OpenAI Key for Embeddings (optional)", "OPENAI_API_KEY", "sk-...")
+            st.caption("Leave blank to automatically use local Sentence-Transformers embeddings.")
+        mcp_checkbox = st.checkbox("Use MCP tools (Tavily / Neo4j)", value=False)
+        if mcp_checkbox:
+            key_input("MCP Server URL", "MCP_URL", "http://localhost:8000")
+            key_input("MCP API Key (optional)", "MCP_API_KEY", "")
+            key_input("Neo4j URI", "NEO4J_URI", "bolt://localhost:7687")
+            key_input("Neo4j Username", "NEO4J_USERNAME", "neo4j")
+            key_input("Neo4j Password", "NEO4J_PASSWORD", "")
+
+    st.subheader("RAG Parameters")
+    answer_mode = st.selectbox("Answer Mode", ["concise", "detailed", "list", "pros_cons", "timeline", "table"])
+    k = st.slider("Sources to Retrieve (Top-k)", min_value=2, max_value=12, value=6)
+    use_reranker = st.checkbox("Cross-Encoder Reranking", value=True)
+    temperature = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
+
+    if st.button("Reset session"):
+        st.session_state.clear()
+        st.rerun()
+
     privacy_note()
 
-    # Diagnostics: show whether a Tavily key is available (masked) and allow a quick test
-    tavily_env_val = env_defaults.get("TAVILY_API_KEY", "")
-    tavily_session_val = st.session_state["keys"].get("TAVILY_API_KEY", "")
-    def _mask(k: str) -> str:
-        return (k[:8] + "...") if k and len(k) > 8 else ("(present)" if k else "(none)")
-
-    if tavily_session_val:
-        st.caption(f"Tavily key: loaded in session { _mask(tavily_session_val) }")
-    elif tavily_env_val:
-        st.caption(f"Tavily key: found in .env { _mask(tavily_env_val) } — will be used")
-    else:
-        st.caption("Tavily API key is missing. Please set TAVILY_API_KEY in .env or paste it in the sidebar.")
-
-    if st.button("Test Tavily key"):
-        # Validate the key (lightweight test using Tavily SDK)
-        key_to_test = st.session_state["keys"].get("TAVILY_API_KEY", "") or os.getenv("TAVILY_API_KEY", "")
-        if not key_to_test:
-            st.error("No Tavily API key provided. Paste it in the sidebar or add it to .env and reload.")
-        else:
-            try:
-                # import locally to avoid unconditional dependency on tavily at import time
-                from tavily import TavilyClient, errors as tavily_errors
-                client = TavilyClient(api_key=key_to_test)
-                # perform a tiny search to validate auth (no heavy work)
-                client.search(query="test", max_results=1)
-                st.success("Tavily key OK — test search succeeded.")
-            except Exception as e:
-                # Map known tavily auth error to user-friendly message
-                try:
-                    if isinstance(e, tavily_errors.InvalidAPIKeyError):
-                        st.error("Tavily API key is invalid or unauthorized. Please verify the key and try again.")
-                    else:
-                        st.error(f"Tavily test failed: {e}")
-                except Exception:
-                    # If tavily_errors isn't defined or another error occurred, fall back
-                    st.error(f"Tavily test failed: {e}")
-
-    # Per-provider test buttons (OpenAI, Anthropic, Groq, Google/Gemini)
     st.markdown("---")
+    st.subheader("Connectivity Tests")
+    col_tav, col_rst = st.columns(2)
+    with col_tav:
+        if st.button("Test Tavily"):
+            key_to_test = st.session_state["keys"].get("TAVILY_API_KEY", "") or os.getenv("TAVILY_API_KEY", "")
+            if not key_to_test:
+                st.error("No Tavily key set.")
+            else:
+                try:
+                    from tavily import TavilyClient
+                    client = TavilyClient(api_key=key_to_test)
+                    client.search(query="test", max_results=1)
+                    st.success("Tavily OK")
+                except Exception as e:
+                    st.error(f"Failed: {e}")
+
     def _run_llm_test(label: str, key_name: str, display_name: str):
         key_to_test = st.session_state["keys"].get(key_name, "") or os.getenv(key_name, "")
         if not key_to_test:
-            st.error(f"No {display_name} key provided. Paste it in the sidebar or add it to .env and reload.")
+            st.error(f"No {display_name} key.")
             return
         try:
             llm = build_llm(label, st.session_state["keys"])
-            # Lightweight prompt that expects a short reply
-            msg = [{"role": "system", "content": "You are a tiny connectivity test responder."},
+            msg = [{"role": "system", "content": "You are a test responder."},
                    {"role": "user", "content": "Respond with OK."}]
             resp = llm.chat(msg, stream=False, max_tokens=16)
-            # Some adapters return generators or objects; convert to str safely
             out = ''.join(resp) if hasattr(resp, '__iter__') and not isinstance(resp, str) else str(resp)
-            if out and ("ok" in out.lower() or "ok" == out.strip().lower() or len(out) > 0):
-                st.success(f"{display_name} key OK — test call succeeded.")
+            if out:
+                st.success(f"{display_name} OK")
             else:
-                st.warning(f"{display_name} test returned an unexpected response: {out}")
+                st.warning(f"Unexpected: {out}")
         except Exception as e:
-            st.error(f"{display_name} test failed: {e}")
+            st.error(f"{display_name} failed: {e}")
 
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button("Test OpenAI key"):
+        if st.button("Test OpenAI"):
             _run_llm_test("OpenAI / gpt-4o-mini", "OPENAI_API_KEY", "OpenAI")
-        if st.button("Test Anthropic key"):
+        if st.button("Test Anthropic"):
             _run_llm_test("Anthropic / Claude 3.5", "ANTHROPIC_API_KEY", "Anthropic")
     with col_b:
-        if st.button("Test Groq key"):
-            _run_llm_test("Groq / groq-1.0", "GROQ_API_KEY", "Groq")
-        if st.button("Test Google/Gemini key"):
+        if st.button("Test Groq"):
+            _run_llm_test("Groq / llama-3.3-70b-versatile", "GROQ_API_KEY", "Groq")
+        if st.button("Test Gemini"):
             _run_llm_test("Gemini / 1.5 Pro", "GOOGLE_API_KEY", "Google/Gemini")
-cols = st.columns([1, 2, 1])
-with cols[1]:
-    st.markdown(
-        "<div style='display:flex; justify-content:center; align-items:center;'><h1 style='margin:0; font-size:26px;'>OpenScout — RAG with MCP tool layer</h1></div>",
-        unsafe_allow_html=True,
-    )
-    st.write("")
 
+st.markdown("<h1 style='text-align: center;'>OpenScout</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #555;'>Developer-focused RAG search engine with multi-source retrieval & citations</p>", unsafe_allow_html=True)
 
-k = 6
-use_reranker = True
-use_mcp = bool(st.session_state["keys"].get("USE_MCP", False) or mcp_checkbox)
-answer_mode = "concise"
-temperature = 0.2
-max_tokens = 512
-
-# Simple chat history stored in session so the UI resembles ChatGPT
 if "messages" not in st.session_state:
-    st.session_state["messages"] = []  # list[dict(role:str, content:str, name?:str)]
+    st.session_state["messages"] = []
+if "last_hits" not in st.session_state:
+    st.session_state["last_hits"] = []
+if "last_citations" not in st.session_state:
+    st.session_state["last_citations"] = []
 
-def render_chat_history():
+left_col, right_col = st.columns([3, 2])
+
+with left_col:
     for m in st.session_state["messages"]:
         if m.get("role") == "user":
-            # user message
-            try:
-                with st.chat_message("user"):
-                    st.write(m.get("content", ""))
-            except Exception:
-                st.markdown(f"**You:** {m.get('content','')}")
+            with st.chat_message("user"):
+                st.write(m.get("content", ""))
         else:
-            # assistant message — show name OpenScope bot and content
-            try:
-                with st.chat_message("assistant"):
-                    st.markdown("**OpenScope bot**")
-                    st.write(m.get("content", ""))
-            except Exception:
-                st.markdown("**OpenScope bot**")
+            with st.chat_message("assistant"):
+                st.markdown("**OpenScout**")
                 st.write(m.get("content", ""))
 
-render_chat_history()
+with right_col:
+    st.markdown("### Sources")
+    if st.session_state["last_hits"]:
+        render_sources(st.session_state["last_hits"], st.session_state["last_citations"])
+    else:
+        st.caption("Sources will appear here after a search.")
 
 query = st.chat_input("Ask anything (we'll fetch sources and cite them)...")
 
 if query:
-    # Append the user's question to the chat history (avoid duplicates)
-    if not st.session_state["messages"] or st.session_state["messages"][-1].get("content") != query or st.session_state["messages"][-1].get("role") != "user":
-        st.session_state["messages"].append({"role": "user", "content": query})
+    st.session_state["messages"].append({"role": "user", "content": query})
+    with left_col:
+        with st.chat_message("user"):
+            st.write(query)
 
-    with st.spinner("Searching, fetching, indexing, and answering…"):
-        try:
-            llm = build_llm(provider, st.session_state["keys"])
-            index, conn = get_index_and_db()
-            tools = MCPTools(st.session_state["keys"])  # MCP adapters (SDK fallback)
+    with left_col:
+        with st.chat_message("assistant"):
+            st.markdown("**OpenScout**")
+            status_container = st.empty()
+            status_container.info("Searching, fetching, indexing, and answering...")
 
-            # Run graph → returns hits (retrieved chunks) and raw pages indexed
-            result = app_graph.invoke(State(
-                query=query, k=k,
-                use_mcp=use_mcp,
-                tavily_api_key=st.session_state["keys"].get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY", ""),
-                openai_api_key=st.session_state["keys"].get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
-                tools=tools
-            ))
-
-            if isinstance(result, dict):
-                hits = result.get("hits", []) or []
-                synthesizer_fn = result.get("synthesizer") or State.synthesizer
-            else:
-                hits = getattr(result, "hits", []) or []
-                synthesizer_fn = getattr(result, "synthesizer", State.synthesizer)
-
-            if use_reranker:
-                hits = maybe_rerank(query, hits, top_k=k)
-
-            # Try streaming the assistant reply if the adapter supports it.
-            from core.synthesize import _messages
-            messages_for_llm = _messages(query, hits, answer_mode)
-            answer = ""
             try:
-                maybe_stream = llm.chat(messages_for_llm, stream=True, temperature=temperature, max_tokens=max_tokens)
-                # If the response is an iterator/generator, stream token-by-token
-                if hasattr(maybe_stream, "__iter__") and not isinstance(maybe_stream, str):
-                    acc = ""
-                    # Render a live assistant message labeled OpenScope bot
-                    try:
-                        with st.chat_message("assistant"):
-                            st.markdown("**OpenScope bot**")
-                            placeholder = st.empty()
-                            for chunk in maybe_stream:
-                                # some adapters yield dicts or objects; coerce to str
-                                text = chunk if isinstance(chunk, str) else str(chunk)
-                                acc += text
-                                placeholder.write(acc)
-                    except Exception:
-                        # Fallback if chat_message isn't available in this stream context
-                        acc = "".join([str(c) for c in maybe_stream])
-                    answer = acc
+                llm = build_llm(provider, st.session_state["keys"])
+                tools = MCPTools(st.session_state["keys"])
+                use_mcp = bool(st.session_state["keys"].get("USE_MCP", False) or mcp_checkbox)
+
+                result = app_graph.invoke(State(
+                    query=query,
+                    k=k,
+                    use_mcp=use_mcp,
+                    tavily_api_key=st.session_state["keys"].get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY", ""),
+                    openai_api_key=st.session_state["keys"].get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
+                    tools=tools
+                ))
+
+                if isinstance(result, dict):
+                    hits = result.get("hits", []) or []
                 else:
-                    # Not a stream — get full reply
-                    resp = maybe_stream
-                    answer = ''.join(resp) if hasattr(resp, '__iter__') and not isinstance(resp, str) else str(resp)
-            except Exception as e:
-                # Streaming failed (adapter may not support stream or error); fall back to non-stream synthesizer
+                    hits = getattr(result, "hits", []) or []
+
+                if use_reranker:
+                    hits = maybe_rerank(query, hits, top_k=k)
+
+                status_container.empty()
+
+                messages_for_llm = _messages(
+                    query, hits, mode=answer_mode,
+                    history=st.session_state["messages"][:-1]
+                )
+
+                answer_placeholder = st.empty()
+                full_answer = ""
+
                 try:
-                    answer, _ = synthesizer_fn(llm, query, hits, mode=answer_mode, temperature=temperature, max_tokens=max_tokens)
-                except Exception as e2:
-                    raise
+                    stream_obj = llm.chat(messages_for_llm, stream=True, temperature=temperature, max_tokens=1024)
+                    if hasattr(stream_obj, "__iter__") and not isinstance(stream_obj, str):
+                        for chunk in stream_obj:
+                            full_answer += chunk if isinstance(chunk, str) else str(chunk)
+                            answer_placeholder.markdown(full_answer)
+                    else:
+                        full_answer = str(stream_obj)
+                        answer_placeholder.markdown(full_answer)
+                except Exception:
+                    full_answer, _ = State.synthesizer(
+                        llm, query, hits, mode=answer_mode, temperature=temperature, max_tokens=1024,
+                        history=st.session_state["messages"][:-1]
+                    )
+                    answer_placeholder.markdown(full_answer)
 
-            # compute citations similar to synthesize_with_llm
-            citations = [{"id": i} for i, _ in enumerate(hits, start=1) if f"[#{i}]" in answer]
+                citations = [{"id": i} for i, _ in enumerate(hits, start=1) if f"[#{i}]" in full_answer]
+                st.session_state["messages"].append({"role": "assistant", "content": full_answer})
+                st.session_state["last_hits"] = hits
+                st.session_state["last_citations"] = citations
 
-            # Append assistant reply to chat history so it appears in the UI
-            st.session_state["messages"].append({"role": "assistant", "content": answer})
-        except Exception as e:
-            # Show a friendly error message with optional dev details in an expander
-            st.error("An error occurred while searching or fetching sources.")
-            with st.expander("Details (click to expand)"):
-                st.write(str(e))
-            # Log the exception for debugging
-            logger.exception("Error running graph pipeline")
-            # Stop further processing
-            st.stop()
+                st.rerun()
 
-    # Layout: answer on left (main), compact sources on right
-    left, right = st.columns([3, 1])
-    with left:
-        last_assistant = ""
-        if st.session_state.get("messages"):
-            last = st.session_state["messages"][-1]
-            if last.get("role") == "assistant":
-                last_assistant = last.get("content", "") or ""
-
-        if not last_assistant or last_assistant.strip() != (answer or "").strip():
-            st.markdown("### Answer")
-            st.write(answer)
-        else:
-            # No duplicate: optionally show a short caption directing users to the chat
-            st.markdown("### Answer")
-            st.info("Answer shown in the chat above (OpenScope bot).")
-    with right:
-        st.markdown("### Sources")
-        render_sources(hits, citations)
+            except Exception as e:
+                status_container.empty()
+                st.error("An error occurred during pipeline execution.")
+                with st.expander("Error details"):
+                    st.write(str(e))
+                logger.exception("Error running graph pipeline")

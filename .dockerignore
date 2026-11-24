@@ -23,4 +23,8 @@ coverage.xml
 venv/
 .env
 *.db
+*.sqlite
 *.sqlite3
+*.bin
+chunks.sqlite
+faiss_index.bin
