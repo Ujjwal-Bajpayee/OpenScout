@@ -7,7 +7,7 @@ def tavily_search(query: str, api_key: str, k: int = 8):
 
     client = TavilyClient(api_key=key)
     try:
-        res = client.search(query=query, max_results=k)
+        res = client.search(query=query, search_depth="advanced", max_results=k)
     except Exception as e:
         if isinstance(e, tavily_errors.InvalidAPIKeyError):
             raise RuntimeError("Tavily API key is invalid or unauthorized. Please verify the key in the sidebar.") from e

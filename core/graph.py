@@ -14,6 +14,7 @@ from .synthesize import synthesize_with_llm
 
 class State(BaseModel):
     query: str
+    optimized_query: str = ""
     k: int = 6
     use_mcp: bool = False
     tavily_api_key: str = ""
@@ -24,6 +25,7 @@ class State(BaseModel):
     chunks: List[Dict] = []
     hits: List[Dict] = []
     tools: object | None = None
+    llm: object | None = None
     synthesizer: Callable = None
 
 def _run_async(coro):
@@ -37,11 +39,28 @@ def _run_async(coro):
             return executor.submit(lambda: asyncio.run(coro)).result()
     return asyncio.run(coro)
 
+def _optimize_query(llm, user_query: str) -> str:
+    if not llm:
+        return user_query
+    try:
+        msgs = [
+            {"role": "system", "content": "You are a search query optimizer. Given a user question, generate a single concise keyword search query targeting specific facts, entities, names, records, or numbers. Output ONLY the search query text, nothing else."},
+            {"role": "user", "content": user_query}
+        ]
+        resp = llm.chat(msgs, stream=False, max_tokens=32, temperature=0.0)
+        out = ''.join(resp) if hasattr(resp, '__iter__') and not isinstance(resp, str) else str(resp)
+        cleaned = out.strip().strip('"\'')
+        return cleaned if cleaned and len(cleaned) > 2 else user_query
+    except Exception:
+        return user_query
+
 def node_search(s: State) -> State:
+    target_query = _optimize_query(s.llm, s.query)
+    s.optimized_query = target_query
     if s.use_mcp and s.tools:
-        results = s.tools.search(s.query, k=s.k)
+        results = s.tools.search(target_query, k=s.k)
     else:
-        results = tavily_search(s.query, s.tavily_api_key, k=s.k)
+        results = tavily_search(target_query, s.tavily_api_key, k=s.k)
     s.search_results = results
     s.urls = [r["url"] for r in results if r.get("url")]
     return s
@@ -79,7 +98,8 @@ def node_index(s: State) -> State:
     return s
 
 def node_retrieve(s: State) -> State:
-    qvec = embed_one(s.query, api_key=s.openai_api_key)
+    retrieve_q = s.optimized_query if s.optimized_query else s.query
+    qvec = embed_one(retrieve_q, api_key=s.openai_api_key)
     dim = qvec.shape[0] if len(qvec.shape) > 0 else 1536
     index, conn = get_index_and_db(dim=dim)
     s.hits = search(index, conn, qvec, k=s.k)

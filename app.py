@@ -265,7 +265,8 @@ if query:
                     use_mcp=use_mcp,
                     tavily_api_key=active_tavily,
                     openai_api_key=st.session_state["keys"].get("OPENAI_API_KEY", ""),
-                    tools=tools
+                    tools=tools,
+                    llm=llm
                 ))
 
                 if isinstance(result, dict):
